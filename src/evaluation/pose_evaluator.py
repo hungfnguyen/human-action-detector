@@ -4,7 +4,11 @@ Pose Evaluator - Minimal scoring for yoga poses.
 Đánh giá đơn giản dựa trên 1-2 góc quan trọng nhất cho mỗi tư thế.
 """
 
-from ..geometry.geometry_utils import GeometryUtils
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from geometry.geometry_utils import GeometryUtils
 
 
 class PoseEvaluator:
