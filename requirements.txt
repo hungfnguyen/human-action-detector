@@ -12,6 +12,11 @@ ultralytics
 torch
 torchvision
 
+# ================================
+# Cấu hình / Validation (RẤT QUAN TRỌNG)
+# ================================
+pydantic
+
 # --- Tiện ích khác (Optional nhưng tốt cho dự án) ---
 tqdm
 requests
