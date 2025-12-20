@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 import sys
 from pathlib import Path
+import queue  # 🚀 For async video processing
 
 # --- CẤU HÌNH GIAO DIỆN & XỬ LÝ ---
 ctk.set_appearance_mode("Dark")
@@ -21,8 +22,9 @@ WINDOW_WIDTH = 1366
 WINDOW_HEIGHT = 768
 
 # Kích thước chuẩn để xử lý AI (Tất cả ảnh/video sẽ được đưa về size này trước khi vẽ)
-PROCESS_WIDTH = 1280
-PROCESS_HEIGHT = 720
+# 🚀 OPTIMIZED: Giảm từ 1280x720 xuống 960x540 để tăng FPS
+PROCESS_WIDTH = 960
+PROCESS_HEIGHT = 540
 
 # --- IMPORT MODULES TỪ SRC ---
 sys.path.insert(0, str(Path(__file__).parent))
@@ -57,12 +59,17 @@ class YogaApp(ctk.CTk):
         self.minsize(1024, 600)
 
         # --- TỰ ĐỘNG FULL MÀN HÌNH (MAXIMIZED) ---
-        # Sử dụng after(0) để đảm bảo cửa sổ đã khởi tạo xong trước khi phóng to
+        # Linux không hỗ trợ 'zoomed', dùng attributes() để maximize
         try:
-            self.after(0, lambda: self.state('zoomed'))
+            # Thử dùng attributes (Linux-friendly)
+            self.attributes('-zoomed', True)
         except Exception:
-            # Fallback cho hệ điều hành không hỗ trợ 'zoomed' (ví dụ một số distro Linux)
-            self.geometry(f"{screen_width}x{screen_height}+0+0")
+            try:
+                # Fallback: Windows/Mac style
+                self.state('zoomed')
+            except Exception:
+                # Fallback cuối: Manual geometry
+                self.geometry(f"{screen_width}x{screen_height}+0+0")
         
         # --- KHỞI TẠO CÁC MODULE AI ---
         self.detector = None
@@ -95,8 +102,13 @@ class YogaApp(ctk.CTk):
         self.cap = None
         self.video_running = False
         self.is_paused = False
-        self.video_delay = 30 
+        self.video_delay = 30
         
+        # 🚀 ASYNC VIDEO PROCESSING: Producer-Consumer Architecture
+        self.frame_queue = queue.Queue(maxsize=5)  # Buffer 5 frames
+        self.processing_thread = None
+        self.frame_counter = 0
+        self.process_every_n_frames = 1  # Xử lý mỗi N frame (1=all, 2=every other)
         # Load sample images ban đầu
         self.after(1000, self.load_sample_images_ui)
 
@@ -111,7 +123,12 @@ class YogaApp(ctk.CTk):
                 if not os.path.exists(yolo_path):
                     yolo_path = "yolov8m-pose.pt" 
                 
-                self.detector = PoseDetector(model_path=yolo_path, confidence_threshold=0.5)
+                # Enable GPU for maximum performance
+                self.detector = PoseDetector(
+                    model_path=yolo_path, 
+                    confidence_threshold=0.5,
+                    use_gpu=True  # 🚀 GPU Acceleration enabled
+                )
                 self.recognizer = PoseRecognizer(model_path=clf_path)
                 self.evaluator = PoseEvaluator()
                 self.drawer = SkeletonDrawer()
@@ -245,14 +262,12 @@ class YogaApp(ctk.CTk):
         self.video_controls_frame = ctk.CTkFrame(parent, height=50, fg_color="transparent")
         self.video_controls_frame.grid_remove() # Ẩn mặc định
         
-        ctk.CTkButton(self.video_controls_frame, text="⏪ Chậm", width=80, command=self.slow_down_video).pack(side="left", padx=10)
-        self.btn_pause = ctk.CTkButton(self.video_controls_frame, text="⏸ Tạm Dừng", width=100, fg_color="#E63946", command=self.toggle_pause)
+        # Pause/Resume button
+        self.btn_pause = ctk.CTkButton(self.video_controls_frame, text="⏸ Tạm Dừng", width=120, fg_color="#E63946", command=self.toggle_pause)
         self.btn_pause.pack(side="left", padx=10)
-        ctk.CTkButton(self.video_controls_frame, text="Nhanh ⏩", width=80, command=self.speed_up_video).pack(side="left", padx=10)
-        ctk.CTkButton(self.video_controls_frame, text="📷 Lưu Ảnh", width=100, fg_color="#00ADB5", command=self.save_snapshot).pack(side="right", padx=10)
         
-        self.lbl_speed = ctk.CTkLabel(self.video_controls_frame, text="Speed: 1x")
-        self.lbl_speed.pack(side="left", padx=10)
+        # Snapshot button
+        ctk.CTkButton(self.video_controls_frame, text="📷 Lưu Ảnh", width=120, fg_color="#00ADB5", command=self.save_snapshot).pack(side="right", padx=10)
 
         # --- 3b. IMAGE CONTROLS (Nút lưu ảnh) ---
         self.image_controls_frame = ctk.CTkFrame(parent, height=50, fg_color="transparent")
@@ -338,24 +353,19 @@ class YogaApp(ctk.CTk):
 
     # --- VIDEO CONTROLS ---
     def toggle_pause(self):
-        if not self.video_running: return
+        """Pause/Resume video playback"""
+        if not self.video_running:
+            return
+        
         self.is_paused = not self.is_paused
-        self.btn_pause.configure(text="▶ Tiếp Tục" if self.is_paused else "⏸ Tạm Dừng",
-                                 fg_color="#00C853" if self.is_paused else "#E63946")
+        self.btn_pause.configure(
+            text="▶ Tiếp Tục" if self.is_paused else "⏸ Tạm Dừng",
+            fg_color="#00C853" if self.is_paused else "#E63946"
+        )
+        
+        # Resume display worker if unpaused
         if not self.is_paused:
-            self.update_video_frame()
-
-    def slow_down_video(self):
-        self.video_delay = min(500, self.video_delay + 20)
-        self.update_speed_label()
-
-    def speed_up_video(self):
-        self.video_delay = max(5, self.video_delay - 20)
-        self.update_speed_label()
-
-    def update_speed_label(self):
-        speed_x = round(30 / self.video_delay, 1)
-        self.lbl_speed.configure(text=f"Speed: {speed_x}x")
+            self.display_video_worker()
 
     def save_snapshot(self):
         if self.current_frame_processed is None:
@@ -425,45 +435,172 @@ class YogaApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Lỗi", f"Không thể lưu file: {e}")
 
-    # --- CORE PROCESSING LOGIC ---
+    # --- 🚀 ASYNC VIDEO PROCESSING ---
+    def process_video_worker(self):
+        """Background thread: Read + Process frames → Queue (Producer)"""
+        frame_count = 0
+        
+        while self.video_running:
+            # ✅ FIX: Check pause state
+            if self.is_paused:
+                time.sleep(0.1)  # Sleep when paused
+                continue
+            
+            if self.cap is None or not self.cap.isOpened():
+                break
+                
+            ret, frame = self.cap.read()
+            if not ret:
+                self.video_running = False
+                break
+            
+            frame_count += 1
+            
+            # Skip frames if needed
+            if frame_count % self.process_every_n_frames != 0:
+                continue
+            
+            try:
+                # Resize
+                frame_resized = self.resize_image_to_fixed_size(frame, (PROCESS_WIDTH, PROCESS_HEIGHT))
+                
+                # Process AI (YOLOv8, ML, Drawing) - All on GPU!
+                if MODEL_LOADED and self.detector:
+                    results = self.detector.predict(frame_resized)
+                    kp_norm = self.detector.get_keypoints_normalized(results)
+                    kp_abs = self.detector.get_keypoints_absolute(results)
+                    
+                    if kp_norm and kp_abs:
+                        pose_name, confidence = self.recognizer.recognize(kp_norm)
+                        score, feedback = self.evaluator.evaluate(pose_name, kp_abs)
+                        frame_drawn = self.drawer.draw(frame_resized.copy(), kp_abs, score)
+                        frame_final = self.overlay.draw_scoreboard(frame_drawn, pose_name, score, feedback)
+                    else:
+                        pose_name, score, feedback = "NO POSE", 0, "Không tìm thấy người"
+                        frame_final = frame_resized
+                else:
+                    pose_name, score, feedback = "Loading", 0, "Đang tải..."
+                    frame_final = frame_resized
+                
+                # Put processed frame to queue (non-blocking)
+                try:
+                    self.frame_queue.put_nowait({
+                        'frame': frame_final,
+                        'pose': pose_name,
+                        'score': score,
+                        'feedback': feedback
+                    })
+                except queue.Full:
+                    # Queue full, skip this frame
+                    pass
+                    
+            except Exception as e:
+                print(f"Processing error: {e}")
+                continue
+        
+        # Signal end
+        try:
+            self.frame_queue.put_nowait(None)
+        except:
+            pass
+    
+    def display_video_worker(self):
+        """UI thread: Get frame from queue → Display (Consumer)"""
+        if not self.video_running or not self.is_video_mode:
+            return
+        
+        try:
+            # Get processed frame from queue (non-blocking)
+            data = self.frame_queue.get_nowait()
+            
+            if data is None:
+                # End of video
+                self.stop_video()
+                self.lbl_feedback.configure(text="Kết thúc Video.")
+                messagebox.showinfo("Xong", "Đã phân tích xong video.")
+                return
+            
+            # Display frame (FAST!)
+            frame_cv = data['frame']
+            pose_name = data['pose']
+            score = data['score']
+            feedback = data['feedback']
+            
+            # Convert + Display
+            self.current_frame_processed = frame_cv
+            img_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
+            pil_result = Image.fromarray(img_rgb)
+            self.current_result_image = pil_result
+            
+            self.display_image_on_label(pil_result, self.lbl_img_result)
+            self.update_stats(pose_name, score, feedback)
+            
+        except queue.Empty:
+            # No frame ready, skip this cycle
+            pass
+        except Exception as e:
+            print(f"Display error: {e}")
+        
+        # Schedule next display update (30 FPS = 33ms)
+        if self.video_running and self.is_video_mode:
+            self.after(33, self.display_video_worker)
+    
     def start_video(self, file_path):
-        if self.video_running: return
+        """Start async video processing"""
+        # ✅ FIX: Nếu đang có video (dù pause), stop nó trước
+        if self.video_running:
+            self.stop_video()
+            # Wait a bit for cleanup
+            import time
+            time.sleep(0.3)
+            
         self.cap = cv2.VideoCapture(file_path)
         if not self.cap.isOpened():
             messagebox.showerror("Lỗi", "Không thể mở file Video!")
             return
-            
+        
+        # Clear queue
+        while not self.frame_queue.empty():
+            try:
+                self.frame_queue.get_nowait()
+            except:
+                break
+        
         self.video_running = True
         self.is_paused = False
-        self.video_delay = 30
-        self.update_speed_label()
         self.btn_pause.configure(text="⏸ Tạm Dừng", fg_color="#E63946")
-        self.update_video_frame()
+        
+        # Start processing thread (Background)
+        self.processing_thread = threading.Thread(target=self.process_video_worker, daemon=True)
+        self.processing_thread.start()
+        
+        # Start display worker (UI thread)
+        self.display_video_worker()
 
     def stop_video(self):
+        """Stop video processing"""
         self.video_running = False
+        
+        # Wait for processing thread
+        if self.processing_thread and self.processing_thread.is_alive():
+            self.processing_thread.join(timeout=1.0)
+        
+        # Release video capture
         if self.cap and self.cap.isOpened():
             self.cap.release()
+        
+        # Clear queue
+        while not self.frame_queue.empty():
+            try:
+                self.frame_queue.get_nowait()
+            except:
+                break
+        
         self.lbl_img_input.configure(image=None)
         self.lbl_img_result.configure(image=None)
         self.lbl_img_result.configure(text="Đã dừng.")
 
-    def update_video_frame(self):
-        if not self.video_running or not self.is_video_mode or self.is_paused:
-            return
-
-        ret, frame = self.cap.read()
-        if ret:
-            # --- QUAN TRỌNG: Resize về kích thước chuẩn TRƯỚC khi xử lý ---
-            frame_resized = self.resize_image_to_fixed_size(frame, (PROCESS_WIDTH, PROCESS_HEIGHT))
-            self.process_and_display(frame_resized, is_video=True)
-            
-            # Lặp lại vòng lặp
-            self.after(self.video_delay, self.update_video_frame)
-        else:
-            self.stop_video()
-            self.lbl_feedback.configure(text="Kết thúc Video.")
-            messagebox.showinfo("Xong", "Đã phân tích xong video.")
+    # (Old update_video_frame removed - replaced by async architecture above)
 
     def process_image_logic(self, img_path):
         try:
@@ -563,11 +700,25 @@ class YogaApp(ctk.CTk):
 
     def open_file_dialog(self):
         if self.is_video_mode:
-            file_path = filedialog.askopenfilename(filetypes=[("Video", "*.mp4;*.avi;*.mov;*.mkv")])
+            # Linux/Mac cần dùng space thay vì semicolon
+            file_path = filedialog.askopenfilename(
+                title="Chọn Video",
+                filetypes=[
+                    ("Video files", "*.mp4 *.avi *.mov *.mkv"),
+                    ("All files", "*.*")
+                ]
+            )
             if file_path:
                 self.start_video(file_path)
         else:
-            file_path = filedialog.askopenfilename(filetypes=[("Image", "*.jpg;*.jpeg;*.png")])
+            # Linux/Mac cần dùng space thay vì semicolon
+            file_path = filedialog.askopenfilename(
+                title="Chọn Ảnh",
+                filetypes=[
+                    ("Image files", "*.jpg *.jpeg *.png *.bmp"),
+                    ("All files", "*.*")
+                ]
+            )
             if file_path:
                 self.current_image_path = file_path
                 threading.Thread(target=self.process_image_logic, args=(file_path,)).start()

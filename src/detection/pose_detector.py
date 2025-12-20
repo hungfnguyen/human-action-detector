@@ -27,27 +27,46 @@ class PoseDetector:
         >>> print(f"Found {len(keypoints)} keypoints")
     """
     
-    def __init__(self, model_path: str = "yolov8m-pose.pt", confidence_threshold: float = 0.5):
+    def __init__(self, model_path: str = "yolov8m-pose.pt", confidence_threshold: float = 0.5, use_gpu: bool = True):
         """
         Initialize pose detector.
         
         Args:
             model_path: Path to YOLOv8 pose model (.pt file)
             confidence_threshold: Minimum confidence for keypoint detection (0-1)
+            use_gpu: Use GPU if available (default: True)
         """
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
         self.keypoints_const = KEYPOINTS
+        self.use_gpu = use_gpu
         self._load_model()
     
     def _load_model(self):
-        """Load YOLOv8 pose model."""
+        """Load YOLOv8 pose model with GPU support."""
         if "pose" not in self.model_path:
             sys.exit("Error: Model must be a YOLOv8 Pose model (e.g., yolov8m-pose.pt)")
         
         try:
+            import torch
+            
+            # Determine device
+            if self.use_gpu and torch.cuda.is_available():
+                self.device = 'cuda'
+                gpu_name = torch.cuda.get_device_name(0)
+                print(f"🚀 GPU detected: {gpu_name}")
+            else:
+                self.device = 'cpu'
+                if self.use_gpu:
+                    print("⚠️ GPU requested but not available, using CPU")
+            
+            # Load model
             self.model = YOLO(self.model_path)
+            
+            # Move model to device (YOLOv8 handles this internally)
             print(f"✅ Loaded YOLOv8 Pose model: {self.model_path}")
+            print(f"   Device: {self.device.upper()}")
+            
         except Exception as e:
             sys.exit(f"Error loading model: {e}")
     
@@ -147,7 +166,13 @@ class PoseDetector:
         Returns:
             YOLOv8 Results object
         """
-        results = self.model.predict(image, save=False, verbose=False)
+        # Pass device to YOLOv8 for GPU acceleration
+        results = self.model.predict(
+            image, 
+            save=False, 
+            verbose=False,
+            device=self.device  # Use GPU if available
+        )
         return results[0]
     
     def __call__(self, image: np.ndarray) -> Results:

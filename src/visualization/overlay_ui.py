@@ -2,11 +2,13 @@
 Overlay UI - Draw score and feedback overlay on frame.
 
 Displays pose name, score, and feedback message on image with adaptive scaling.
+Supports Vietnamese text using PIL.
 """
 
 import cv2
 import numpy as np
 from typing import Tuple, List
+from PIL import Image, ImageDraw, ImageFont
 
 
 class OverlayUI:
@@ -85,6 +87,52 @@ class OverlayUI:
         cv2.rectangle(frame, (x, y), (x + filled_width, y + height), color, -1)
         
         return frame
+    
+    def put_vietnamese_text(self,
+                           frame: np.ndarray,
+                           text: str,
+                           position: Tuple[int, int],
+                           font_size: int,
+                           color: Tuple[int, int, int]) -> np.ndarray:
+        """
+        Draw Vietnamese text on frame using PIL (supports Unicode).
+        
+        Args:
+            frame: OpenCV image (BGR)
+            text: Text to draw (supports Vietnamese)
+            position: (x, y) position
+            font_size: Font size in pixels
+            color: BGR color tuple
+        
+        Returns:
+            Frame with text drawn
+        """
+        # Convert BGR to RGB for PIL
+        img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(img_pil)
+        
+        # Try to load a Unicode font (DejaVu supports Vietnamese)
+        try:
+            # Try system fonts that support Vietnamese
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+        except:
+            try:
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", font_size)
+            except:
+                # Fallback to default
+                font = ImageFont.load_default()
+        
+        # Convert BGR to RGB for PIL
+        color_rgb = (color[2], color[1], color[0])
+        
+        # Draw text
+        draw.text(position, text, font=font, fill=color_rgb)
+        
+        # Convert back to BGR for OpenCV
+        frame_rgb = np.array(img_pil)
+        frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+        
+        return frame_bgr
     
     def draw_scoreboard(self,
                        frame: np.ndarray,
@@ -195,11 +243,18 @@ class OverlayUI:
         bar_w = panel_w - int(40 * scale)
         self.draw_score_bar(frame, score, curr_x, curr_y, bar_w, bar_h)
         
-        # 4. Lời nhận xét (Feedback lines)
+        # 4. Lời nhận xét (Feedback lines) - Use PIL for Vietnamese support
         curr_y += int(35 * scale)
+        font_size = int(16 * scale)  # Convert font_scale to pixel size
+        
         for line in feedback_lines:
-            cv2.putText(frame, line, (curr_x, curr_y),
-                        font_face, font_scale_normal, (220, 220, 220), thickness_normal, cv2.LINE_AA)
+            frame = self.put_vietnamese_text(
+                frame, 
+                line, 
+                (curr_x, curr_y - font_size),  # Adjust Y for PIL rendering
+                font_size, 
+                (220, 220, 220)
+            )
             curr_y += line_spacing
             
         return frame
