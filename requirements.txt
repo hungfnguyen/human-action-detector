@@ -1,6 +1,18 @@
+# --- Giao diện (GUI) ---
+customtkinter
+Pillow
+packaging
+
+# --- Xử lý ảnh & Video ---
 opencv-python
-torch
-streamlit
-pydantic
-ultralytics
 numpy
+
+# --- AI & Deep Learning (YOLOv8) ---
+ultralytics
+torch
+torchvision
+
+# --- Tiện ích khác (Optional nhưng tốt cho dự án) ---
+tqdm
+requests
+pandas
