@@ -58,6 +58,61 @@ class PoseRecognizer:
             return (keypoints[idx*2], keypoints[idx*2+1])
         
         try:
+            # ✅ CASE 0: Kiểm tra cúi xuống (Bent Over) - STRICT!
+            # Nếu AI bảo Goddess nhưng người đang cúi → KHÔNG PHẢI Goddess!
+            if ai_pose == 'Goddess':
+                shoulder_y_left = keypoints[5*2 + 1]   # Y của vai trái
+                shoulder_y_right = keypoints[6*2 + 1]  # Y của vai phải
+                hip_y_left = keypoints[11*2 + 1]       # Y của hông trái
+                hip_y_right = keypoints[12*2 + 1]      # Y của hông phải
+                wrist_y_left = keypoints[9*2 + 1]      # Y của cổ tay trái
+                wrist_y_right = keypoints[10*2 + 1]    # Y của cổ tay phải
+                
+                avg_shoulder_y = (shoulder_y_left + shoulder_y_right) / 2
+                avg_hip_y = (hip_y_left + hip_y_right) / 2
+                avg_wrist_y = (wrist_y_left + wrist_y_right) / 2
+                
+                # CHECK 1: Goddess PHẢI có vai TRÊN hông (y nhỏ hơn trong coordinate)
+                # Nếu vai DƯỚI hông rõ ràng (y lớn hơn nhiều) = đang cúi
+                # RELAX: Cho phép vai hơi thấp hơn hông một chút (khi squat sâu)
+                body_height = abs(shoulder_y_left - hip_y_left)
+                if avg_shoulder_y > avg_hip_y + (body_height * 0.15):  # Vai thấp hơn 15%
+                    return 'Unknown'  # Cúi rõ ràng!
+                
+                # CHECK 2: Cổ tay phải cao hơn hông đáng kể (tay giơ lên)
+                # Goddess thật: tay giơ cao (wrist_y << hip_y)
+                # Cúi xuống: tay chạm đất (wrist_y ≈ hip_y)
+                # RELAX: Threshold lớn hơn để cho phép tay không giơ quá cao
+                if avg_wrist_y >= avg_hip_y:  # Cổ tay thấp hơn hoặc ngang hông
+                    return 'Unknown'  # Tay không giơ lên = CÚI!
+            
+            # ✅ CASE 0.5: Kiểm tra Downdog vs Plank (Hip angle check)
+            # Downdog và Plank đều có tay chống + chân thẳng → dễ nhầm!
+            if ai_pose == 'Downdog' or ai_pose == 'Plank':
+                shoulder_left = get_pt(5)
+                shoulder_right = get_pt(6)
+                hip_left = get_pt(11)
+                hip_right = get_pt(12)
+                knee_left = get_pt(13)
+                knee_right = get_pt(14)
+                
+                # Tính góc vai-hông-gối (hip angle)
+                avg_shoulder = ((shoulder_left[0] + shoulder_right[0]) / 2, 
+                               (shoulder_left[1] + shoulder_right[1]) / 2)
+                avg_hip = ((hip_left[0] + hip_right[0]) / 2,
+                          (hip_left[1] + hip_right[1]) / 2)
+                avg_knee = ((knee_left[0] + knee_right[0]) / 2,
+                           (knee_left[1] + knee_right[1]) / 2)
+                
+                hip_angle = self._calculate_angle(avg_shoulder, avg_hip, avg_knee)
+                
+                # Downdog: Góc nhỏ (70-120°) - hông nâng cao, hình chữ V
+                # Plank: Góc lớn (>140°) - thân ngang, thẳng
+                if ai_pose == 'Downdog' and hip_angle > 140:
+                    return 'Plank'  # Thân ngang → Plank!
+                elif ai_pose == 'Plank' and hip_angle < 120:
+                    return 'Downdog'  # Hông nâng cao → Downdog!
+            
             # Tính góc đầu gối trái và phải
             angle_l = self._calculate_angle(get_pt(11), get_pt(13), get_pt(15))
             angle_r = self._calculate_angle(get_pt(12), get_pt(14), get_pt(16))

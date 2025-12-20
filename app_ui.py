@@ -103,12 +103,20 @@ class YogaApp(ctk.CTk):
         self.video_running = False
         self.is_paused = False
         self.video_delay = 30
+        self.current_pose_name = "Unknown"  # Track current pose for snapshot naming
+        self.current_score = 0  # Track current score for snapshot naming
         
         # 🚀 ASYNC VIDEO PROCESSING: Producer-Consumer Architecture
         self.frame_queue = queue.Queue(maxsize=5)  # Buffer 5 frames
         self.processing_thread = None
         self.frame_counter = 0
         self.process_every_n_frames = 1  # Xử lý mỗi N frame (1=all, 2=every other)
+        
+        # ⌨️ Keyboard shortcuts
+        self.bind_all("<space>", lambda e: self.toggle_pause())
+        self.bind_all("<KeyPress-s>", lambda e: self.save_snapshot())
+        self.bind_all("<KeyPress-S>", lambda e: self.save_snapshot())
+        
         # Load sample images ban đầu
         self.after(1000, self.load_sample_images_ui)
 
@@ -143,7 +151,7 @@ class YogaApp(ctk.CTk):
                 print(f"Chi tiết lỗi: {e}")
 
     def create_sidebar(self):
-        self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=0)
+        self.sidebar_frame = ctk.CTkFrame(self, width=300, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
         self.sidebar_frame.grid_rowconfigure(7, weight=1)
 
@@ -171,7 +179,7 @@ class YogaApp(ctk.CTk):
         self.lbl_project_title = ctk.CTkLabel(self.sidebar_frame, 
                                             text=title_text,
                                             font=ctk.CTkFont(size=16, weight="bold"),
-                                            wraplength=200, # Tự động xuống dòng nếu dài quá 200px
+                                            wraplength=240, # Tự động xuống dòng nếu dài quá 240px
                                             justify="center")
         self.lbl_project_title.grid(row=1, column=0, padx=10, pady=(5, 20))
         
@@ -315,6 +323,10 @@ class YogaApp(ctk.CTk):
         self.is_video_mode = False
         self.stop_video()
         
+        
+        # Clear display when switching modes
+        self.lbl_img_result.configure(image=None, text="")
+        
         self.frame_input.grid(row=0, column=0, sticky="nsew")
         self.frame_output.grid(row=0, column=1, columnspan=1, sticky="nsew")
         
@@ -331,6 +343,10 @@ class YogaApp(ctk.CTk):
     def switch_to_video_mode(self):
         self.is_video_mode = True
         self.stop_video()
+        
+        
+        # Clear display when switching modes
+        self.lbl_img_result.configure(image=None, text="")
         
         self.frame_input.grid_forget()
         self.frame_output.grid(row=0, column=0, columnspan=2, sticky="nsew")
@@ -372,7 +388,11 @@ class YogaApp(ctk.CTk):
             messagebox.showerror("Lỗi", "Chưa có khung hình để lưu!")
             return
             
-        filename = f"snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        # Create filename with pose name and score
+        pose_clean = self.current_pose_name.lower().replace(" ", "_")
+        score_str = f"{self.current_score}pct"  # e.g., "95pct"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{pose_clean}_{score_str}_{timestamp}.jpg"
         if not os.path.exists("snapshots"):
             os.makedirs("snapshots")
             
@@ -380,7 +400,7 @@ class YogaApp(ctk.CTk):
         
         try:
             cv2.imwrite(save_path, self.current_frame_processed)
-            messagebox.showinfo("Đã lưu", f"Lưu ảnh thành công tại:\n{save_path}")
+            messagebox.showinfo("Đã lưu", f"Lưu ảnh thành công:\n{filename}")
         except Exception as e:
             messagebox.showerror("Lỗi", f"Không thể lưu file: {e}")
 
@@ -526,6 +546,10 @@ class YogaApp(ctk.CTk):
             score = data['score']
             feedback = data['feedback']
             
+            # Track current pose and score for snapshots
+            self.current_pose_name = pose_name
+            self.current_score = score
+            
             # Convert + Display
             self.current_frame_processed = frame_cv
             img_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
@@ -659,6 +683,8 @@ class YogaApp(ctk.CTk):
 
             # 4. Lưu lại kết quả
             self.current_frame_processed = frame_final # Frame OpenCV (BGR)
+            self.current_pose_name = pose_name  # Track for snapshots
+            self.current_score = score  # Track for snapshots
             
             # 5. Hiển thị
             self.display_final_result(frame_final, pose_name, score, feedback, is_video)
